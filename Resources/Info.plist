@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- CFBundleName is the label macOS shows in System Settings > Privacy & Security >
+	     Automation, under this binary's entry for controlling Mail. -->
+	<key>CFBundleName</key>
+	<string>apple-mail-mcp</string>
+	<key>CFBundleIdentifier</key>
+	<string>codes.eneko.apple-mail-mcp</string>
+	<key>CFBundleShortVersionString</key>
+	<string>1.0.0</string>
+	<key>CFBundleVersion</key>
+	<string>1</string>
+
+	<!-- Mail has no native framework for external processes: MailKit only builds
+	     extensions that run inside Mail. The only route is Apple events, which need this
+	     key. Name verified against the tccd binary on macOS 26.5. -->
+	<key>NSAppleEventsUsageDescription</key>
+	<string>Lets Claude search and read your mail, and send messages you ask for, by controlling the Mail app through this local MCP server.</string>
+</dict>
+</plist>

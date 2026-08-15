@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- Required to send Apple events once the hardened runtime is enabled. Without it
+	     the runtime blocks every event before TCC is even consulted, and this server
+	     would stop working entirely. Only needed by the Mail server; Contacts and
+	     Calendar reach their frameworks directly. -->
+	<key>com.apple.security.automation.apple-events</key>
+	<true/>
+</dict>
+</plist>

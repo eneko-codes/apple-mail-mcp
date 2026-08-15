@@ -1,0 +1,64 @@
+{
+  "manifest_version": "0.3",
+  "name": "apple-mail-mcp",
+  "display_name": "Apple Mail",
+  "version": "1.0.0",
+  "description": "Search and read macOS Mail, and send messages you approve. Never deletes or moves anything.",
+  "long_description": "A local MCP server written in Swift that gives Claude access to the Mail app on this Mac.\n\nMail has no framework a separate process can use, so this server drives Mail.app through Apple events. Mail must be running, and Mail \u2014 not this server \u2014 is what reads the mailbox. That makes every query slow, so a search always stops after a fixed number of messages rather than crawling every mailbox of every account, and says so plainly when it had to stop early.\n\nThe permission is Automation, granted per target app. macOS asks the first time a tool contacts Mail, and the grant appears under System Settings \u2192 Privacy & Security \u2192 Automation.\n\nPlug and play: there is nothing to configure.\n\nNothing here can delete, move or alter a received message. Mail's scripting dictionary offers those commands and they are deliberately not exposed: a mailbox is a record.\n\nsend_mail is the only outward-facing tool and it cannot be undone \u2014 no recall, no undo. It requires an explicit confirmation, checks every address first, and returns a receipt naming every recipient including bcc. Switch it off below if you only want Claude to read.\n\nNot affiliated with or endorsed by Apple Inc.",
+  "author": {
+    "name": "eneko-codes",
+    "url": "https://github.com/eneko-codes"
+  },
+  "homepage": "https://github.com/eneko-codes/apple-mail-mcp",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/eneko-codes/apple-mail-mcp"
+  },
+  "license": "MIT",
+  "icon": "icon.png",
+  "keywords": [
+    "mail",
+    "email",
+    "macos",
+    "apple",
+    "inbox",
+    "send"
+  ],
+  "server": {
+    "type": "binary",
+    "entry_point": "server/apple-mail-mcp",
+    "mcp_config": {
+      "command": "${__dirname}/server/apple-mail-mcp",
+      "args": [],
+      "env": {}
+    }
+  },
+  "tools": [
+    {
+      "name": "mail_status",
+      "description": "Report whether Mail is running and automation is permitted. Reads no mail."
+    },
+    {
+      "name": "mail_accounts",
+      "description": "List accounts, mailboxes and unread counts"
+    },
+    {
+      "name": "mail_search",
+      "description": "Find messages by sender or subject, bounded by mailbox and date"
+    },
+    {
+      "name": "mail_get",
+      "description": "Read one message. Does not mark it as read."
+    },
+    {
+      "name": "send_mail",
+      "description": "Send an email. Cannot be undone; requires explicit confirmation."
+    }
+  ],
+  "compatibility": {
+    "claude_desktop": ">=0.10.0",
+    "platforms": [
+      "darwin"
+    ]
+  }
+}
