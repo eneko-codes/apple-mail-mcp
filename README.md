@@ -62,6 +62,20 @@ default.
 
 Switch it off if you only want Claude to read.
 
+## Frameworks and APIs
+
+| Used | For | Reference |
+|---|---|---|
+| ScriptingBridge — `SBApplication`, `SBElementArray` | Every read and write | [ScriptingBridge](https://developer.apple.com/documentation/scriptingbridge) |
+| `AEDeterminePermissionToAutomateTarget` | Checking Automation consent without sending an event | [Apple Events](https://developer.apple.com/documentation/coreservices/apple_events) |
+| AppKit — `NSWorkspace`, `NSRunningApplication` | Whether the app is installed, and whether it is running | [AppKit](https://developer.apple.com/documentation/appkit) |
+| `NSAppleEventsUsageDescription` | The consent string macOS shows | [Information Property List](https://developer.apple.com/documentation/bundleresources/information-property-list/nsappleeventsusagedescription) |
+
+Mail's dictionary (`sdef /System/Applications/Mail.app`) offers `delete`, `move`, `bounce`,
+`redirect`, `forward` and `reply`; none is exposed, and a test enforces that. Also unused:
+the `rule` and `rule condition` classes, `signature`, `message viewer`, and `check for new
+mail`/`synchronize`.
+
 ## Install
 
 ### 1. Build the bundle
@@ -196,9 +210,9 @@ in this repository.
 
 [sr795]: https://github.com/swiftlang/swift/issues/43407
 
-The bindings are hand-declared rather than generated: `sdef … | sdp -fh` emits a 637-line
-header, while declaring the handful of members this server actually sends is smaller and
-auditable. A selector Mail does not implement is a crash, not a nil — check `sdef` before
+The bindings are hand-declared rather than generated: `sdef … | sdp -fh` emits a header for
+Mail's whole dictionary, while declaring the handful of members this server actually sends
+is smaller and auditable. A selector Mail does not implement is a crash, not a nil — check `sdef` before
 adding one.
 
 One member is deliberately absent: Mail's `account` class exposes `password` in plain text.
