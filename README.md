@@ -239,8 +239,7 @@ reserved `.invalid` TLD, which can never resolve — so even a bug that reached 
 could not deliver anything. See `CLAUDE.md`, whose first section is the rule that makes
 that non-negotiable.
 
-Manual verification against a live mailbox is the owner's job; `verification.md` is
-the script for it.
+Manual verification against a live mailbox is the owner's job.
 
 ## Licence
 
