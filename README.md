@@ -247,7 +247,7 @@ swift build
 swift test
 ```
 
-31 tests, all against an in-memory fake with Mail closed. Every fixture address uses the
+The tests run entirely against an in-memory fake with Mail closed. Every fixture address uses the
 reserved `.invalid` TLD, which can never resolve — so even a bug that reached the network
 could not deliver anything. See `CLAUDE.md`, whose first section is the rule that makes
 that non-negotiable.
