@@ -1,10 +1,9 @@
 import Foundation
-import MCP
 
 public enum MailMCPServer {
 
     public static let name = "apple-mail-mcp"
-    public static let version = "1.0.0"
+    public static let version = "1.0.1"
 
     public static let instructions = """
         Access to the macOS Mail app.
@@ -31,24 +30,15 @@ public enum MailMCPServer {
 
     /// The store is a parameter so the whole server can be driven by a double. Nothing
     /// in this function sends an Apple event by itself.
-    public static func run(store: (any MailStore)? = nil) async throws {
+    public static func run(store: (any MailStore)? = nil) async {
         let store = store ?? ScriptingBridgeMailStore()
-        let tools = MailTools(store: store)
-        let server = Server(
-            name: name,
-            version: version,
-            instructions: instructions,
-            capabilities: .init(tools: .init(listChanged: false))
-        )
-
-        await server.withMethodHandler(ListTools.self) { _ in .init(tools: ToolCatalog.all()) }
-        await server.withMethodHandler(CallTool.self) { await tools.handle($0) }
-
-        // The default StdioTransport logger is a no-op handler. Leave it that way: a
-        // logger writing to stdout would interleave with the JSON-RPC stream and break
-        // every response after the first log line.
         Diagnostics.started(version: version)
-        try await server.start(transport: StdioTransport())
-        await server.waitUntilCompleted()
+        await serveStandardStreams(handler: handler(tools: MailTools(store: store)))
+    }
+
+    public static func handler(tools: MailTools) -> MCPHandler {
+        MCPHandler(
+            name: name, version: version, instructions: instructions,
+            catalog: ToolCatalog.all(), tools: tools)
     }
 }
