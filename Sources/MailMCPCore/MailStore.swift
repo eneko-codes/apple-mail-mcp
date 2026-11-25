@@ -39,15 +39,19 @@ public protocol MailStore: Sendable {
 
     func accounts() async throws -> [AccountInfo]
 
-    /// `scanCeiling` bounds how deep into a mailbox one query may go. It is passed per
-    /// call rather than held by the store so that the value the tools enforce and the
-    /// value `mail_status` reports cannot be two different numbers.
+    /// Every match among the messages looked at, unordered, and how far the search got.
+    ///
+    /// `scanCeiling` bounds how many messages one search looks at and `timeLimit` how long
+    /// it may walk. Both are passed per call rather than held by the store, so that the
+    /// values the tools enforce and the ones `mail_status` reports cannot be two different
+    /// numbers. `from` and `to` are both inclusive.
     func search(
         query: String?, account: String?, mailbox: String?, from: Date?, to: Date?,
-        unreadOnly: Bool, limit: Int, scanCeiling: Int
-    ) async throws -> MessageSearchPage
+        unreadOnly: Bool, scanCeiling: Int, timeLimit: Duration
+    ) async throws -> MessageScan
 
-    func fetch(id: EmailID, bodyLimit: Int) async throws -> MessageDetail?
+    /// The whole message, or `nil` when the mailbox no longer holds that id.
+    func fetch(id: EmailID) async throws -> MessageDetail?
 
     /// Irreversible. There is no recall.
     func send(_ draft: OutgoingDraft) async throws -> SentReceipt

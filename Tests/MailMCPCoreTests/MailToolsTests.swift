@@ -148,31 +148,23 @@ struct MailToolsTests {
     /// A ceiling that goes unmentioned reads as "this is everything". The fixture has
     /// more messages than `Configuration.scanCeiling`, so the fixed ceiling is what
     /// bites here — nothing in the test lowers it.
-    @Test("Hitting the scan ceiling is announced")
+    @Test("Hitting the scan ceiling is announced before the data")
     func scanCeilingIsAnnounced() async {
-        let tools = MailTools(
-            store: FakeMailStore(messages: Fixtures.manyMessages), calendar: Fixtures.calendar)
-        let result = await tools.handle(.init(name: "mail_search", arguments: [:]))
-        guard case .text(let text) = result.content.first else {
-            Issue.record("no text content")
-            return
-        }
-        #expect(text.contains("Scan limit reached"))
+        let result = await call("mail_search", store: FakeMailStore(messages: Fixtures.manyMessages))
+        #expect(
+            result.text.hasPrefix(
+                "The scan stopped after \(Configuration.scanCeiling) messages; more may exist. Narrow by account, mailbox, from_date or to_date.\n"))
     }
 
-    /// The empty case needs its own wording: "no matches" alone would imply the mailbox
+    /// The empty case needs the notice too: "no matches" alone would imply the mailbox
     /// was exhausted, when the search actually stopped early.
     @Test("An empty result that hit the ceiling says so too")
     func emptyResultStillWarnsAboutCeiling() async {
-        let tools = MailTools(
-            store: FakeMailStore(messages: Fixtures.manyMessages), calendar: Fixtures.calendar)
-        let result = await tools.handle(
-            .init(name: "mail_search", arguments: ["query": .string("nothingmatches")]))
-        guard case .text(let text) = result.content.first else {
-            Issue.record("no text content")
-            return
-        }
-        #expect(text.contains("scan limit"))
+        let result = await call(
+            "mail_search", ["query": .string("nothingmatches")],
+            store: FakeMailStore(messages: Fixtures.manyMessages))
+        #expect(result.text.hasPrefix("The scan stopped after \(Configuration.scanCeiling) messages; more may exist."))
+        #expect(result.text.contains("No messages match 'nothingmatches'."))
     }
 
     @Test("A bad date is refused with the accepted forms")
@@ -184,19 +176,22 @@ struct MailToolsTests {
 
     // MARK: Read
 
-    @Test("A truncated body says it was truncated")
-    func truncatedBodyIsFlagged() async {
+    @Test("A message longer than its window says so before the text")
+    func longMessageIsAnnounced() async {
         let id = Fixtures.messages[0].id.encoded
-        let result = await call("mail_get", ["id": .string(id), "body_limit": .int(200)])
+        let result = await call("mail_get", ["id": .string(id), "max_characters": .int(200)])
         #expect(!result.isError)
-        #expect(result.text.contains("Body truncated"))
+        #expect(result.text.hasPrefix("Message text: characters 1–200 of "))
+        #expect(result.text.contains("Pass character_offset=200 for the rest."))
     }
 
-    @Test("A full body carries no truncation notice")
-    func shortBodyIsNotFlagged() async {
+    @Test("A message that fits its window carries no notice")
+    func shortMessageIsNotFlagged() async {
         let id = Fixtures.messages[1].id.encoded
         let result = await call("mail_get", ["id": .string(id)])
-        #expect(!result.text.contains("Body truncated"))
+        #expect(result.text.hasPrefix("Message\n"))
+        #expect(!result.text.contains("Message text: characters"))
+        #expect(result.text.contains("Invented body text."))
     }
 
     @Test("An id that no longer resolves explains why")

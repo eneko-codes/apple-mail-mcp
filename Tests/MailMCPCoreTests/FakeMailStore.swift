@@ -15,6 +15,10 @@ final class FakeMailStore: MailStore, @unchecked Sendable {
     /// Everything `send` was asked to deliver. A test asserting this is empty is
     /// asserting that nothing left the machine.
     private(set) var sent: [OutgoingDraft] = []
+    /// When set, a search runs out of time once it has looked at this many messages.
+    var timeRunsOutAfter: Int?
+    /// When set, `fetch` and `send` take this long, as Mail does when it is not answering.
+    var delay: Duration?
 
     init(
         state: MailAvailability = .ready,
@@ -30,55 +34,69 @@ final class FakeMailStore: MailStore, @unchecked Sendable {
 
     func accounts() async throws -> [AccountInfo] { accountList }
 
+    /// Runs the real policy, `MailScan`, over the invented mailboxes: the ceiling, the time
+    /// limit and the matching a test sees are the ones the server ships.
     func search(
         query: String?, account: String?, mailbox: String?, from: Date?, to: Date?,
-        unreadOnly: Bool, limit: Int, scanCeiling: Int
-    ) async throws -> MessageSearchPage {
-        // A real ceiling, so a test can exercise the truncation policy rather than
-        // asserting that the formatter prints a flag someone set by hand.
-        let scanned = messages.prefix(scanCeiling)
-        let hitCeiling = messages.count > scanCeiling
-        var matches = Array(scanned)
-        if let account { matches = matches.filter { $0.account == account } }
-        if let mailbox { matches = matches.filter { $0.mailbox == mailbox } }
-        if let from { matches = matches.filter { $0.dateReceived >= from } }
-        if let to { matches = matches.filter { $0.dateReceived <= to } }
-        if unreadOnly { matches = matches.filter { !$0.isRead } }
-        if let query, !query.isEmpty {
-            matches = matches.filter {
-                $0.subject.localizedCaseInsensitiveContains(query)
-                    || $0.sender.localizedCaseInsensitiveContains(query)
+        unreadOnly: Bool, scanCeiling: Int, timeLimit: Duration
+    ) async throws -> MessageScan {
+        var looked = 0
+        return MailScan.run(
+            accounts: accountList, query: query, account: account, mailbox: mailbox,
+            unreadOnly: unreadOnly, scanCeiling: scanCeiling,
+            isPastDeadline: { self.timeRunsOutAfter.map { looked >= $0 } ?? false }
+        ) { accountName, mailboxName, maximum in
+            // The date bound is applied by Mail itself, before anything is counted.
+            let held = messages.filter { message in
+                message.account == accountName && message.mailbox == mailboxName
+                    && message.dateReceived >= (from ?? .distantPast)
+                    && message.dateReceived <= (to ?? .distantFuture)
             }
+            var allowed = min(held.count, maximum)
+            var ranOutOfTime = false
+            if let budget = timeRunsOutAfter, looked + allowed > budget {
+                allowed = max(budget - looked, 0)
+                ranOutOfTime = true
+            }
+            looked += allowed
+            return MailScan.Mailbox(
+                messages: held.prefix(allowed).map {
+                    MailScan.Message(
+                        id: $0.id.messageID, subject: $0.subject, sender: $0.sender,
+                        dateReceived: $0.dateReceived, isRead: $0.isRead)
+                },
+                reachedMaximum: !ranOutOfTime && held.count > maximum, ranOutOfTime: ranOutOfTime)
         }
-        matches.sort { $0.dateReceived > $1.dateReceived }
-        let page = matches.prefix(limit).map {
-            MessageSummary(
-                id: $0.id, subject: $0.subject, sender: $0.sender,
-                dateReceived: $0.dateReceived, isRead: $0.isRead, mailbox: $0.mailbox)
-        }
-        return MessageSearchPage(
-            results: Array(page), total: matches.count, hitScanLimit: hitCeiling)
     }
 
-    func fetch(id: EmailID, bodyLimit: Int) async throws -> MessageDetail? {
-        guard let found = messages.first(where: { $0.id == id }) else { return nil }
-        let truncated = found.body.count > bodyLimit
-        return MessageDetail(
-            id: found.id, subject: found.subject, sender: found.sender,
-            recipients: found.recipients, ccRecipients: found.ccRecipients,
-            replyTo: found.replyTo, dateSent: found.dateSent,
-            dateReceived: found.dateReceived, isRead: found.isRead, mailbox: found.mailbox,
-            account: found.account, rfcMessageID: found.rfcMessageID,
-            body: truncated ? String(found.body.prefix(bodyLimit)) : found.body,
-            bodyTruncated: truncated)
+    func fetch(id: EmailID) async throws -> MessageDetail? {
+        if let delay { try? await Task.sleep(for: delay) }
+        return messages.first { $0.id == id }
     }
 
     func send(_ draft: OutgoingDraft) async throws -> SentReceipt {
+        if let delay { try? await Task.sleep(for: delay) }
         sent.append(draft)
         return SentReceipt(
             to: draft.to, cc: draft.cc, bcc: draft.bcc, subject: draft.subject,
-            sender: "tester@example.invalid", bodyPreview: String(draft.body.prefix(280)))
+            sender: "tester@example.invalid", body: draft.body)
     }
+}
+
+/// What a test reads back from one `tools/call`.
+struct ToolResult {
+    var text: String
+    var isError: Bool
+}
+
+/// One call through the tool layer, against a fake.
+func call(
+    _ name: String, _ arguments: [String: Value] = [:], store: FakeMailStore = FakeMailStore(),
+    timeout: Duration = Configuration.callTimeLimit
+) async -> ToolResult {
+    let tools = MailTools(store: store, calendar: Fixtures.calendar, timeout: timeout)
+    let result = await tools.handle(.init(name: name, arguments: arguments))
+    return ToolResult(text: result.text, isError: result.isError)
 }
 
 enum Fixtures {
@@ -119,15 +137,15 @@ enum Fixtures {
         sender: String,
         received: Date,
         isRead: Bool = true,
+        recipients: [String] = ["tester@example.invalid"],
         body: String = "Invented body text."
     ) -> MessageDetail {
         MessageDetail(
             id: EmailID(account: account, mailbox: mailbox, messageID: id),
             subject: subject, sender: sender,
-            recipients: ["tester@example.invalid"], ccRecipients: [], replyTo: nil,
+            recipients: recipients, ccRecipients: [], replyTo: nil,
             dateSent: received, dateReceived: received, isRead: isRead, mailbox: mailbox,
-            account: account, rfcMessageID: "<\(id)@fictitious.invalid>", body: body,
-            bodyTruncated: false)
+            account: account, rfcMessageID: "<\(id)@fictitious.invalid>", body: body)
     }
 
     /// More than the fixed scan ceiling, so the truncation policy is reachable from a

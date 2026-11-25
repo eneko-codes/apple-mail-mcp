@@ -9,10 +9,10 @@ import MailBridge
 /// an unbounded walk over a large mailbox will appear to hang.
 ///
 /// The Apple events themselves live in the `MailBridge` Objective-C target; see its
-/// header for why they cannot live in Swift. What stays here is policy: which mailboxes
-/// to walk, how a query matches, where to stop scanning, and how a result is shaped. That
-/// split is deliberate — policy is what the tests can reach through `MailStore`, and the
-/// bridge is the part no test can.
+/// header for why they cannot live in Swift. The policy of a search (which mailboxes to
+/// walk, how a query matches, where to stop) is `MailScan`, which the tests run against
+/// invented mailboxes. What is left here is the part no test can reach, kept thin: handing
+/// the bridge to that policy and turning what comes back into the model's types.
 public struct ScriptingBridgeMailStore: MailStore {
     public static let bundleIdentifier = "com.apple.mail"
 
@@ -90,74 +90,41 @@ public struct ScriptingBridgeMailStore: MailStore {
 
     public func search(
         query: String?, account: String?, mailbox: String?, from: Date?, to: Date?,
-        unreadOnly: Bool, limit: Int, scanCeiling: Int
-    ) async throws -> MessageSearchPage {
+        unreadOnly: Bool, scanCeiling: Int, timeLimit: Duration
+    ) async throws -> MessageScan {
         let everyAccount = try await accounts()
+        let seconds =
+            Double(timeLimit.components.seconds) + Double(timeLimit.components.attoseconds) / 1e18
+        let deadline = Date().addingTimeInterval(seconds)
 
-        var remaining = scanCeiling
-        var matches: [MessageSummary] = []
-        var hitCeiling = false
-
-        for entry in everyAccount where account == nil || entry.name == account {
-            for box in entry.mailboxes {
-                if let mailbox,
-                    box.name.localizedCaseInsensitiveCompare(mailbox) != .orderedSame
-                { continue }
-                if remaining <= 0 {
-                    hitCeiling = true
-                    break
+        do {
+            return try MailScan.run(
+                accounts: everyAccount, query: query, account: account, mailbox: mailbox,
+                unreadOnly: unreadOnly, scanCeiling: scanCeiling,
+                isPastDeadline: { Date() >= deadline }
+            ) { accountName, mailboxName, maximum in
+                let walked = try MailBridge.scanMailbox(
+                    mailboxName, inAccount: accountName, from: from, to: to, maxScan: maximum,
+                    deadline: deadline)
+                let messages = (walked["messages"] as? [[String: Any]] ?? []).compactMap {
+                    raw -> MailScan.Message? in
+                    guard let identifier = raw["id"] as? Int else { return nil }
+                    return MailScan.Message(
+                        id: identifier, subject: raw["subject"] as? String ?? "",
+                        sender: raw["sender"] as? String ?? "",
+                        dateReceived: raw["dateReceived"] as? Date ?? .distantPast,
+                        isRead: raw["isRead"] as? Bool ?? false)
                 }
-
-                let page: [String: Any]
-                do {
-                    page = try MailBridge.scanMailbox(
-                        box.name, inAccount: entry.name, from: from, to: to,
-                        maxScan: remaining)
-                } catch { throw storeFailure(error) }
-
-                let scanned = page["scanned"] as? Int ?? 0
-                // The ceiling is spent across mailboxes, not per mailbox: a walk that
-                // stopped early in one mailbox must not get a fresh budget in the next,
-                // or the advertised bound would mean nothing.
-                if scanned >= remaining { hitCeiling = true }
-                remaining -= scanned
-
-                for raw in page["messages"] as? [[String: Any]] ?? [] {
-                    guard let identifier = raw["id"] as? Int else { continue }
-                    let isRead = raw["isRead"] as? Bool ?? false
-                    if unreadOnly && isRead { continue }
-
-                    let subject = raw["subject"] as? String ?? ""
-                    let sender = raw["sender"] as? String ?? ""
-                    if let needle = query, !needle.isEmpty,
-                        !subject.localizedCaseInsensitiveContains(needle),
-                        !sender.localizedCaseInsensitiveContains(needle)
-                    { continue }
-
-                    matches.append(
-                        MessageSummary(
-                            id: EmailID(
-                                account: entry.name, mailbox: box.name, messageID: identifier),
-                            subject: subject.isEmpty ? "(no subject)" : subject,
-                            sender: sender,
-                            dateReceived: raw["dateReceived"] as? Date ?? .distantPast,
-                            isRead: isRead,
-                            mailbox: box.name))
-                }
-                if hitCeiling { break }
+                return MailScan.Mailbox(
+                    messages: messages, reachedMaximum: walked["reachedMaximum"] as? Bool ?? false,
+                    ranOutOfTime: walked["ranOutOfTime"] as? Bool ?? false)
             }
-            if hitCeiling { break }
-        }
-
-        matches.sort { $0.dateReceived > $1.dateReceived }
-        return MessageSearchPage(
-            results: Array(matches.prefix(limit)), total: matches.count,
-            hitScanLimit: hitCeiling)
+        } catch { throw storeFailure(error) }
     }
 
     // MARK: Fetch
 
-    public func fetch(id: EmailID, bodyLimit: Int) async throws -> MessageDetail? {
+    public func fetch(id: EmailID) async throws -> MessageDetail? {
         try guardAvailability()
 
         let raw: [String: Any]
@@ -175,8 +142,6 @@ public struct ScriptingBridgeMailStore: MailStore {
             throw storeFailure(error)
         }
 
-        let full = raw["body"] as? String ?? ""
-        let truncated = full.count > bodyLimit
         return MessageDetail(
             id: id,
             subject: (raw["subject"] as? String).flatMap { $0.isEmpty ? nil : $0 }
@@ -191,8 +156,7 @@ public struct ScriptingBridgeMailStore: MailStore {
             mailbox: raw["mailbox"] as? String ?? id.mailbox,
             account: id.account,
             rfcMessageID: raw["rfcMessageID"] as? String,
-            body: truncated ? String(full.prefix(bodyLimit)) : full,
-            bodyTruncated: truncated)
+            body: raw["body"] as? String ?? "")
     }
 
     // MARK: Send
@@ -210,6 +174,6 @@ public struct ScriptingBridgeMailStore: MailStore {
         return SentReceipt(
             to: draft.to, cc: draft.cc, bcc: draft.bcc, subject: draft.subject,
             sender: sender.isEmpty ? "(default account)" : sender,
-            bodyPreview: String(draft.body.prefix(280)))
+            body: draft.body)
     }
 }

@@ -42,17 +42,40 @@ public enum ToolCatalog {
         ])
     }
 
-    private static func integer(_ description: String, minimum: Int, maximum: Int, default def: Int)
+    /// A `default` is advertised only where omitting the argument really means that value.
+    private static func integer(_ description: String, range: ClosedRange<Int>, default def: Int)
         -> Value
     {
         .object([
             "type": .string("integer"), "description": .string(description),
-            "minimum": .int(minimum), "maximum": .int(maximum), "default": .int(def),
+            "minimum": .int(range.lowerBound), "maximum": .int(range.upperBound),
+            "default": .int(def),
         ])
     }
 
+    private static func boolean(_ description: String, default def: Bool? = nil) -> Value {
+        var schema: [String: Value] = [
+            "type": .string("boolean"), "description": .string(description),
+        ]
+        if let def { schema["default"] = .bool(def) }
+        return .object(schema)
+    }
+
+    private static func limit(_ things: String, range: ClosedRange<Int>, default def: Int) -> Value {
+        integer("Maximum number of \(things) in one page.", range: range, default: def)
+    }
+
+    private static let offset = integer(
+        """
+        Number of rows to skip. A result that does not hold every row says, in its first \
+        lines, the offset to pass for the next page.
+        """, range: Configuration.offsetRange, default: 0)
+
     private static let dateHelp =
-        "Accepts 2026-08-12, 2026-08-12T09:00, or 2026-08-12T09:00:00+02:00."
+        "Accepts \(Arguments.dateForms); the first two are local time."
+
+    private static let readOnly = Tool.Annotations(
+        readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false)
 
     // MARK: Reads
 
@@ -61,93 +84,110 @@ public enum ToolCatalog {
         title: "Mail availability and permission",
         description: """
             Reports whether Mail is running and whether this server may control it, and \
-            says exactly what to enable and where if not. Reads no mail.
+            says exactly what to enable and where if not. Also lists the fixed sizes this \
+            server works to. Reads no mail, and its result is always short.
 
             It checks the permission without sending a real Apple event, so it is safe to \
             call first when anything else is failing. Use it before assuming a mail tool \
             is broken.
             """,
         inputSchema: object(properties: [:]),
-        annotations: .init(
-            readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false)
-    )
+        annotations: readOnly)
 
     static let accounts = Tool(
         name: accountsName,
         title: "List mail accounts and mailboxes",
         description: """
-            Lists every configured account with its addresses and mailboxes, and the \
-            unread count per mailbox.
+            Lists the mail accounts with their addresses, each followed by its mailboxes \
+            and their unread counts: \(Configuration.accountLimit) rows to a page, ordered \
+            by account name, then mailbox name. A mailbox is one row and so is an account, \
+            which takes a further row for every \(Configuration.addressesPerRow) addresses \
+            past its first \(Configuration.addressesPerRow). When there are more rows than \
+            the page holds, the first lines of the result say how many there are and the \
+            offset of the next page: pass limit (up to \
+            \(Configuration.accountLimitRange.upperBound)) and offset.
 
             Call this before mail_search when you need to narrow a query: searching a \
             single mailbox is far faster than searching all of them. Reads no message \
             content.
             """,
-        inputSchema: object(properties: [:]),
-        annotations: .init(
-            readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false)
-    )
+        inputSchema: object(properties: [
+            "limit": limit(
+                "rows", range: Configuration.accountLimitRange,
+                default: Configuration.accountLimit),
+            "offset": offset,
+        ]),
+        annotations: readOnly)
 
     static let search = Tool(
         name: searchName,
         title: "Search mail",
         description: """
-            Finds messages by sender or subject, optionally bounded by account, mailbox \
-            and date. Returns one line per hit with an opaque id, newest first.
+            Finds messages by sender or subject and returns \(Configuration.searchLimit) to \
+            a page, newest first, one line each: date received, sender, subject, mailbox and \
+            an opaque id for mail_get. Sender is clipped to \(Configuration.senderWidth) \
+            characters and subject to \(Configuration.subjectWidth); bodies are not searched \
+            and not returned. When more match than the page holds, the first lines of the \
+            result say how many there are and the offset of the next page: pass limit (up \
+            to \(Configuration.searchLimitRange.upperBound)) and offset.
 
-            ALWAYS bound the query. This works by asking Mail to walk a mailbox, which is \
-            slow: without a date range or a specific mailbox, a large account will take a \
-            very long time. The search stops after \(Configuration.scanCeiling) messages \
-            and says so when it does, so a narrow query is not just faster, it is more \
-            complete.
+            ALWAYS bound the query with account, mailbox, from_date and to_date. This \
+            works by asking Mail to walk mailboxes, which is slow, and one search looks at \
+            no more than \(Configuration.scanCeiling) messages in all, for no longer than \
+            \(Configuration.scanTimeLimit.components.seconds) seconds. When it stops at \
+            either, the first lines say so: messages it never looked at are not in the \
+            result or its count, mailboxes later in the list may not have been opened at \
+            all, and the only way to reach them is a narrower call.
 
-            It matches sender and subject only, not message bodies.
+            from_date and to_date are both inclusive, and one alone runs to the end. \
+            Every page walks the mailboxes again, so ask for a larger limit before asking \
+            for many pages.
             """,
         inputSchema: object(properties: [
-            "query": string("Text to match against sender and subject."),
+            "query": string("Text to match against sender and subject, ignoring case."),
             "account": string("Restrict to one account, exactly as mail_accounts names it."),
-            "mailbox": string("Restrict to one mailbox, for example \"INBOX\"."),
+            "mailbox": string("Restrict to mailboxes of this name, ignoring case, for example \"INBOX\"."),
             "from_date": string("Only messages received on or after this. \(dateHelp)"),
-            "to_date": string("Only messages received on or before this. \(dateHelp)"),
-            "unread_only": .object([
-                "type": .string("boolean"), "default": .bool(false),
-                "description": .string("Only unread messages."),
-            ]),
-            "limit": integer(
-                "Maximum number of messages to return.",
-                minimum: Configuration.searchLimitRange.lowerBound,
-                maximum: Configuration.searchLimitRange.upperBound,
-                default: Configuration.searchLimit),
+            "to_date": string(
+                "Only messages received on or before this; a bare day includes all of that day. \(dateHelp)"),
+            "unread_only": boolean("Only unread messages.", default: false),
+            "limit": limit(
+                "messages", range: Configuration.searchLimitRange, default: Configuration.searchLimit),
+            "offset": offset,
         ]),
-        annotations: .init(
-            readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false)
-    )
+        annotations: readOnly)
 
     static let get = Tool(
         name: getName,
         title: "Read one message",
         description: """
-            Returns the headers and body of a single message.
+            Returns one message: its id, mailbox, dates and read state, then its text, \
+            which is the subject, sender, to and cc recipients, reply-to, message-id and \
+            plain-text body. With no optional argument the first \(Configuration.defaultMaxCharacters) \
+            characters of that text are returned, which is all of most messages. When it \
+            is longer, the first lines of the result say how long it is and the \
+            character_offset to pass for the rest: read on with character_offset and \
+            max_characters (up to \(Configuration.maxCharactersRange.upperBound)).
 
-            Needs an id from mail_search; ids are opaque and cannot be typed by hand. The \
-            body is truncated at 'body_limit' characters and says so when it is, so a \
-            short result is never mistaken for a short email.
-
-            Reading a message here does not mark it as read.
+            Needs an id from mail_search; ids are opaque and cannot be typed by hand. \
+            Attachments are not returned. Reading a message here does not mark it as read.
             """,
         inputSchema: object(
             properties: [
                 "id": string("Identifier returned by mail_search."),
-                "body_limit": integer(
-                    "Maximum characters of body to return.",
-                    minimum: Configuration.bodyLimitRange.lowerBound,
-                    maximum: Configuration.bodyLimitRange.upperBound,
-                    default: Configuration.bodyLimit),
+                "character_offset": integer(
+                    """
+                    Number of characters of the message text to skip. A result that does \
+                    not hold all of it says, in its first lines, the value to pass for the \
+                    rest.
+                    """, range: Configuration.characterOffsetRange, default: 0),
+                "max_characters": integer(
+                    "The most characters of the message text to return.",
+                    range: Configuration.maxCharactersRange,
+                    default: Configuration.defaultMaxCharacters),
             ],
             required: ["id"]),
-        annotations: .init(
-            readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false)
-    )
+        annotations: readOnly)
 
     // MARK: Write
 
@@ -155,7 +195,9 @@ public enum ToolCatalog {
         name: sendName,
         title: "Send an email",
         description: """
-            Sends an email from the Mail app. Requires confirm=true.
+            Sends an email from the Mail app and returns a short receipt: the sender, \
+            every recipient list including bcc, the subject and the start of the body. \
+            Requires confirm=true.
 
             THIS CANNOT BE UNDONE. There is no recall, no undo and no draft to fall back \
             on; the message leaves the machine immediately. Show the recipients, subject \
@@ -169,6 +211,14 @@ public enum ToolCatalog {
             One account can own several addresses. Omitting 'from' lets Mail pick its \
             default, which may not be the one the person means; call mail_accounts and \
             pass 'from' explicitly when it matters who the message appears to come from.
+
+            The receipt shows the first \(Configuration.receiptBodyWidth) characters of the \
+            body and the first \(Configuration.receiptAddressCount) addresses of each list, \
+            and says so when that is not all of them; the message itself is always sent \
+            whole. If Mail has not answered after \
+            \(Configuration.callTimeLimit.components.seconds) seconds the call ends with an \
+            error saying the message may still go out: do not send it again without \
+            checking.
             """,
         inputSchema: object(
             properties: [
@@ -182,11 +232,7 @@ public enum ToolCatalog {
                 "bcc": stringArray("Bcc addresses. Hidden from other recipients."),
                 "subject": string("Subject line."),
                 "body": string("Plain-text body."),
-                "confirm": .object([
-                    "type": .string("boolean"),
-                    "description": .string(
-                        "Must be true. Without it nothing is sent."),
-                ]),
+                "confirm": boolean("Must be true. Without it nothing is sent."),
             ],
             required: ["to", "subject", "body", "confirm"]),
         annotations: .init(

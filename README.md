@@ -36,29 +36,76 @@ Three consequences you will feel:
 
 | Tool | Kind | What it does |
 |---|---|---|
-| `mail_status` | read | Reports whether Mail is running, whether automation is permitted, and the fixed defaults in force. Sends no Apple event. |
-| `mail_accounts` | read | Accounts, addresses, mailboxes and unread counts. |
-| `mail_search` | read | Messages by sender or subject, bounded by mailbox and date. Newest first. |
-| `mail_get` | read | Headers and body of one message. Does not mark it read. |
-| `send_mail` | **irreversible** | Sends an email. Requires `confirm: true`. |
+| `mail_status` | read | Reports whether Mail is running, whether automation is permitted, and the fixed sizes in force. Sends no Apple event. |
+| `mail_accounts` | read | Accounts with their addresses, each followed by its mailboxes and unread counts, 100 rows to a page (`limit` up to 300, `offset`), ordered by account name, then mailbox name. |
+| `mail_search` | read | Messages by sender or subject, bounded by `account`, `mailbox`, `from_date` and `to_date` (both inclusive). 20 to a page, newest first (`limit` up to 100, `offset`). |
+| `mail_get` | read | One message: its facts, then its text (subject, from, to, cc, reply-to, message-id, body) through a window of 10,000 characters (`character_offset`, `max_characters` up to 20,000). Does not mark it read. |
+| `send_mail` | **irreversible** | Sends an email and returns a short receipt. Requires `confirm: true`. |
 
 **No tool can delete, move or alter a received message.** Mail's scripting dictionary
 offers `delete`, `move`, `bounce` and `redirect`; none of them is exposed, and a test
 enforces that. A mailbox is a record.
 
+### What a result holds, and how to get the rest
+
+No result is longer than 40,000 characters, and a call with no optional argument returns
+about 10,000 or less. Whenever something exists that a result does not hold, its first
+lines say so in a fixed wording, with the exact argument that returns the rest:
+
+```
+Showing 1–20 of 57 messages. Pass offset=20 for the next page.
+Message text: characters 1–10000 of 48211. Pass character_offset=10000 for the rest.
+Sender is clipped to 32 characters in each row. Read one in full with mail_get.
+The scan stopped after 500 messages; more may exist. Narrow by account, mailbox, from_date or to_date.
+Partial: the time limit was reached after 212 messages. Narrow by account, mailbox, from_date or to_date.
+limit=5000 is outside 1–100; 100 was used.
+```
+
+A number outside its range is moved to the nearest allowed value and reported. A wrong
+type, a date that does not exist (30 February, an hour skipped by daylight saving) and a
+`to_date` before `from_date` are refused with the form expected. Errors repeat at most 80
+characters of what the caller sent.
+
+`mail_get` windows the message's own text, its to and cc recipients included, so a message
+sent to thousands of people is bounded like any other and every one of them can still be
+read. Bcc is not read from a received message. The
+sizes are constants in `Configuration`; the schemas, the descriptions, the instructions
+and `mail_status` quote them, and `BoundsTests` holds each to the code.
+
+**Changed in 2.0.0:** `mail_get`'s `body_limit` is gone. Its place is taken by
+`max_characters`, with `character_offset` to read on.
+
+### Time
+
+Every read is Mail doing the work, and one Apple event cannot be interrupted once sent.
+What this server can and does bound:
+
+- One search looks at no more than 500 messages across the mailboxes it opens, and walks
+  for no longer than 60 seconds. The time is checked before each mailbox and before each
+  message; when it runs out the search returns what it has, marked partial. It can overrun
+  by as long as Mail takes to answer one event, typically the `whose` filter on a very
+  large mailbox.
+- Any call that has not finished after 120 seconds is abandoned and answered with an
+  error. The Apple event it was waiting on is not cancelled: nothing can cancel it.
+- For `send_mail` that error says the message **may still go out**, and not to send it
+  again without checking, because an abandoned send can complete after the answer.
+
 ### send_mail
 
 The only outward-facing tool in the whole project. There is no recall, no undo, no draft
 to fall back on. It requires `confirm: true`, validates every address before it will
-consider sending, and returns a receipt listing every recipient — **including bcc** —
+consider sending, and returns a receipt naming every recipient list — **including bcc** —
 because that receipt is the only record you get of something that cannot be taken back.
+The receipt repeats the start of the body (280 characters) and the first 50 addresses of
+each list, and says so in its first lines when that is not all of them; the message is
+always sent whole.
 
 `from` picks which of your own addresses the message leaves from. One account often owns
 several, and Mail otherwise chooses its default; worse, it accepts an address it does not
 own and silently substitutes that default, so a typo would send under the wrong identity
 and still report success. `from` is therefore checked against what `mail_accounts`
-returns, and an unknown address is refused with the real list. Omit it to keep Mail's
-default.
+returns, and an unknown address is refused with a few of the real ones. Omit it to keep
+Mail's default.
 
 Switch it off if you only want Claude to read.
 
@@ -157,12 +204,11 @@ working entirely without it.
 
 ## Plug and play
 
-There is nothing to configure. What used to be four settings — default mailbox, messages
-scanned per search, message body characters, default search results — are now fixed
-constants in `Configuration`, at the values this server already shipped with. The only
-thing left to adjust in Claude Desktop → Settings → Extensions is the per-tool switch
-below. `mail_status` reports the fixed defaults in force, which is the quickest way to
-confirm which build is answering.
+There is nothing to configure. What used to be settings — default mailbox, messages
+scanned per search, default search results — are fixed constants in `Configuration`,
+beside the page and window sizes and the time limits. The only thing left to adjust in
+Claude Desktop → Settings → Extensions is the per-tool switch below. `mail_status` reports
+the fixed sizes in force, which is the quickest way to confirm which build is answering.
 
 ## Tool switches
 
@@ -233,8 +279,12 @@ because it is far more expensive than ScriptingBridge.
 
 - **Search matches sender and subject only**, not bodies. Body search would mean pulling
   every message across the event boundary.
-- **A fixed scan ceiling per query**, 500 messages. When it bites, the result says so — a
-  truncated answer is never presented as a complete one.
+- **A fixed scan ceiling per query**, 500 messages across every mailbox the query opens,
+  and 60 seconds. When either bites, the first lines of the result say so and what to
+  narrow by — a truncated answer is never presented as a complete one. Mailboxes later in
+  Mail's list may not have been opened at all; the result says how many were.
+- **Every page of a search walks the mailboxes again.** Nothing is cached between calls,
+  so mail that arrives between two pages shifts the rows by one.
 - **No attachments.** Reading or sending them is not exposed.
 - **No reply threading.** Mail's `reply` command cannot be driven reliably with a
   caller-supplied body, so a reply would be composed as a new message; that is not wired
