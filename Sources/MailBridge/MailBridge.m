@@ -182,6 +182,7 @@ static NSString *const MailBundleIdentifier = @"com.apple.mail";
                                               fromDate:(nullable NSDate *)fromDate
                                                 toDate:(nullable NSDate *)toDate
                                                maxScan:(NSInteger)maxScan
+                                              deadline:(nullable NSDate *)deadline
                                                  error:(NSError **)error {
     SBApplication<MailApplication> *application = [self applicationWithError:error];
     if (!application) return nil;
@@ -210,11 +211,14 @@ static NSString *const MailBundleIdentifier = @"com.apple.mail";
         candidates = [box.messages get] ?: @[];
     }
 
-    NSInteger scanned = 0;
+    BOOL reachedMaximum = NO;
+    BOOL ranOutOfTime = NO;
     NSMutableArray<NSDictionary<NSString *, id> *> *messages = [NSMutableArray array];
     for (id<MailMessage> message in candidates) {
-        if (scanned >= maxScan) break;
-        scanned += 1;
+        // Both checks sit before the message is read, so each flag means a message was
+        // there and was not looked at.
+        if ((NSInteger)messages.count >= maxScan) { reachedMaximum = YES; break; }
+        if (deadline && deadline.timeIntervalSinceNow <= 0) { ranOutOfTime = YES; break; }
 
         NSDate *received = message.dateReceived;
         [messages addObject:@{
@@ -225,7 +229,9 @@ static NSString *const MailBundleIdentifier = @"com.apple.mail";
             @"isRead": @(message.readStatus),
         }];
     }
-    return @{@"scanned": @(scanned), @"messages": messages};
+    return @{@"messages": messages,
+             @"reachedMaximum": @(reachedMaximum),
+             @"ranOutOfTime": @(ranOutOfTime)};
 }
 
 + (NSArray<NSString *> *)addressesFrom:(SBElementArray<id<MailRecipient>> *)recipients {

@@ -49,18 +49,22 @@ typedef NS_ERROR_ENUM(MailBridgeErrorDomain, MailBridgeError){
 /// Every account, as `{name, addresses, mailboxes: [{name, unreadCount}]}`.
 + (nullable NSArray<NSDictionary<NSString *, id> *> *)accountsWithError:(NSError **)error;
 
-/// Walks one mailbox and returns `{scanned, messages: [{id, subject, sender,
-/// dateReceived, isRead}]}`.
+/// Walks one mailbox and returns `{messages: [{id, subject, sender, dateReceived,
+/// isRead}], reachedMaximum, ranOutOfTime}`.
 ///
 /// A date bound is pushed into Mail as a `whose` clause rather than applied here:
 /// filtering in Mail is dramatically faster than shipping every message across the Apple
-/// event boundary. `maxScan` bounds the walk; `scanned` reports how far it actually got,
-/// which is what lets the caller say a result was truncated.
+/// event boundary. `maxScan` bounds the walk, and `reachedMaximum` says the mailbox held
+/// more than that. `deadline` is checked before each message, and `ranOutOfTime` says the
+/// walk ended there; one Apple event already sent cannot be interrupted, so the walk can
+/// overrun the deadline by as long as Mail takes to answer one. Either flag is what lets
+/// the caller say the result is not everything.
 + (nullable NSDictionary<NSString *, id> *)scanMailbox:(NSString *)mailbox
                                              inAccount:(NSString *)account
                                               fromDate:(nullable NSDate *)fromDate
                                                 toDate:(nullable NSDate *)toDate
                                                maxScan:(NSInteger)maxScan
+                                              deadline:(nullable NSDate *)deadline
                                                  error:(NSError **)error;
 
 /// One message with its body, or nil if the mailbox no longer holds that id.

@@ -104,16 +104,13 @@ public struct MessageDetail: Sendable, Equatable {
     /// The RFC 5322 Message-ID. Stable across sessions, unlike the numeric id, so it is
     /// reported for reference even though addressing uses `EmailID`.
     public let rfcMessageID: String?
+    /// The whole body. `mail_get` returns a window of it; nothing is cut here.
     public let body: String
-    /// True when `body` was cut to the requested length, so the reader is never left to
-    /// assume a truncated message is the whole thing.
-    public let bodyTruncated: Bool
 
     public init(
         id: EmailID, subject: String, sender: String, recipients: [String],
         ccRecipients: [String], replyTo: String?, dateSent: Date, dateReceived: Date,
-        isRead: Bool, mailbox: String, account: String, rfcMessageID: String?, body: String,
-        bodyTruncated: Bool
+        isRead: Bool, mailbox: String, account: String, rfcMessageID: String?, body: String
     ) {
         self.id = id
         self.subject = subject
@@ -128,7 +125,6 @@ public struct MessageDetail: Sendable, Equatable {
         self.account = account
         self.rfcMessageID = rfcMessageID
         self.body = body
-        self.bodyTruncated = bodyTruncated
     }
 }
 
@@ -163,32 +159,52 @@ public struct SentReceipt: Sendable, Equatable {
     public let bcc: [String]
     public let subject: String
     public let sender: String
-    public let bodyPreview: String
+    /// The body as it was sent. The receipt shows its start and says how long it is.
+    public let body: String
 
     public init(
         to: [String], cc: [String], bcc: [String], subject: String, sender: String,
-        bodyPreview: String
+        body: String
     ) {
         self.to = to
         self.cc = cc
         self.bcc = bcc
         self.subject = subject
         self.sender = sender
-        self.bodyPreview = bodyPreview
+        self.body = body
     }
 }
 
-public struct MessageSearchPage: Sendable, Equatable {
-    public let results: [MessageSummary]
-    public let total: Int
-    /// True when the search stopped at a scan ceiling rather than exhausting the
-    /// mailbox. Distinct from `total`: it means "there may be older matches I did not
-    /// look at", which silence would misrepresent.
-    public let hitScanLimit: Bool
+/// What one search found: every match among the messages it looked at, in no particular
+/// order, and how far it got. The tool layer orders and pages the matches.
+public struct MessageScan: Sendable, Equatable {
 
-    public init(results: [MessageSummary], total: Int, hitScanLimit: Bool = false) {
-        self.results = results
-        self.total = total
-        self.hitScanLimit = hitScanLimit
+    /// Why a search ended before it had looked at everything.
+    public enum Stop: Sendable, Equatable {
+        /// It had looked at as many messages as one search may.
+        case scanCeiling
+        /// It had spent as long as one search may.
+        case timeLimit
+    }
+
+    public let matches: [MessageSummary]
+    /// How many messages were looked at, matching or not.
+    public let scanned: Int
+    /// `nil` when every mailbox the filters select was read to its end. Otherwise messages
+    /// exist that were never looked at, which silence would misrepresent.
+    public let stopped: Stop?
+    public let mailboxesOpened: Int
+    /// How many mailboxes the account and mailbox filters select.
+    public let mailboxesSelected: Int
+
+    public init(
+        matches: [MessageSummary], scanned: Int, stopped: Stop? = nil, mailboxesOpened: Int,
+        mailboxesSelected: Int
+    ) {
+        self.matches = matches
+        self.scanned = scanned
+        self.stopped = stopped
+        self.mailboxesOpened = mailboxesOpened
+        self.mailboxesSelected = mailboxesSelected
     }
 }

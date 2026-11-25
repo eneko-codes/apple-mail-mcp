@@ -1,16 +1,21 @@
 import Foundation
 
+/// Every error this server words. A message says what was wrong, the form allowed and what
+/// to call instead, and repeats a caller's own text only through `ToolStandard.echo`.
 public enum ToolError: Error, Equatable {
     case notAvailable(MailAvailability)
     case missingArgument(String)
     case badArgument(name: String, reason: String)
     case badDate(argument: String, value: String)
+    case datesOutOfOrder(from: String, to: String)
     case badIdentifier(String)
     case notFound(id: String)
     case noRecipients
     case invalidAddress(String)
     case unknownSender(String, known: [String])
     case confirmationRequired
+    case unknownTool(String)
+    case timedOut(tool: String, seconds: Int)
     case storeFailure(String)
 
     public var message: String {
@@ -26,25 +31,34 @@ public enum ToolError: Error, Equatable {
 
         case .badDate(let argument, let value):
             return """
-                Argument '\(argument)' is not a date this server accepts: '\(value)'
+                Argument '\(argument)' is not a date this server accepts: '\(ToolStandard.echo(value))'
 
-                Use 2026-08-12, 2026-08-12T09:00, or 2026-08-12T09:00:00+02:00.
+                Use \(Arguments.dateForms). A date that does not exist, such as 30 February, \
+                is refused too.
+                """
+
+        case .datesOutOfOrder(let from, let to):
+            return """
+                to_date (\(ToolStandard.echo(to))) is before from_date (\(ToolStandard.echo(from))).
+
+                Both are inclusive: pass a to_date on or after from_date, or leave one out \
+                to run to the end.
                 """
 
         case .badIdentifier(let raw):
             return """
-                '\(raw)' is not a message id from this server.
+                '\(ToolStandard.echo(raw))' is not a message id from this server.
 
-                Message ids are opaque tokens produced by mail_search. They cannot be
+                Message ids are opaque tokens produced by mail_search. They cannot be \
                 typed by hand or carried over from another tool.
                 """
 
         case .notFound(let id):
             return """
-                No message found for id '\(id)'.
+                No message found for id '\(ToolStandard.echo(id))'.
 
-                Mail's message ids are only unique within a mailbox, and a message that
-                has been moved or deleted since the search will no longer resolve. Run
+                Mail's message ids are only unique within a mailbox, and a message that \
+                has been moved or deleted since the search will no longer resolve. Run \
                 mail_search again.
                 """
 
@@ -53,7 +67,7 @@ public enum ToolError: Error, Equatable {
 
         case .invalidAddress(let address):
             return """
-                '\(address)' does not look like an email address.
+                '\(ToolStandard.echo(address))' does not look like an email address.
 
                 Addresses must contain an @ with something either side. Nothing was sent.
                 """
@@ -63,10 +77,10 @@ public enum ToolError: Error, Equatable {
         // like it worked. Listing the real addresses is the whole point of the refusal.
         case .unknownSender(let address, let known):
             return """
-                '\(address)' is not one of this Mail installation's own addresses, so
-                nothing was sent.
+                '\(ToolStandard.echo(address))' is not one of this Mail installation's own \
+                addresses, so nothing was sent.
 
-                Available: \(known.isEmpty ? "(none found)" : known.joined(separator: ", "))
+                Available: \(Self.candidates(known))
 
                 Use mail_accounts to see them with the account each belongs to.
                 """
@@ -75,14 +89,54 @@ public enum ToolError: Error, Equatable {
             return """
                 send_mail requires confirm=true.
 
-                Sending is irreversible: there is no recall, no undo, and no draft state
-                to fall back on. Show the recipients, subject and body to the person first,
+                Sending is irreversible: there is no recall, no undo, and no draft state \
+                to fall back on. Show the recipients, subject and body to the person first, \
                 then call again with confirm=true.
                 """
 
+        case .unknownTool(let name):
+            return "'\(ToolStandard.echo(name))' is not a tool of this server."
+
+        case .timedOut(let tool, let seconds):
+            return Self.timeoutMessage(tool: tool, seconds: seconds)
+
         case .storeFailure(let detail):
-            return "Mail returned an error: \(detail)"
+            return "Mail returned an error: \(Self.clipped(detail, to: Configuration.failureDetailWidth))"
         }
+    }
+
+    /// A few of `known`, then how many more there are: an account list can be long, and an
+    /// error is no place for all of it.
+    static func candidates(_ known: [String]) -> String {
+        guard !known.isEmpty else { return "(none found)" }
+        let shown = known.prefix(Configuration.candidateCount).map(ToolStandard.echo)
+        let rest = known.count - shown.count
+        return shown.joined(separator: ", ") + (rest > 0 ? ", and \(rest) more" : "")
+    }
+
+    static func clipped(_ text: String, to width: Int) -> String {
+        text.count > width ? String(text.prefix(width)) + "…" : text
+    }
+
+    /// A send that was abandoned may still go out, which a read never has to say.
+    static func timeoutMessage(tool: String, seconds: Int) -> String {
+        if tool == ToolCatalog.sendName {
+            return """
+                send_mail did not finish within \(seconds) seconds and this call stopped \
+                waiting. IT IS NOT KNOWN WHETHER THE MESSAGE WAS SENT: Mail may still send it.
+
+                Do not call send_mail again for this message. Tell the person, and have them \
+                look in Mail, or look for it with mail_search in the Sent mailbox, before \
+                anything is sent a second time.
+                """
+        }
+        return """
+            The call did not finish within \(seconds) seconds and was abandoned. Nothing \
+            was changed: this tool only reads.
+
+            Mail may be busy, syncing, or waiting on a dialog. mail_status says whether it \
+            still answers. For mail_search, narrow by account, mailbox, from_date or to_date.
+            """
     }
 
     static func availabilityMessage(_ state: MailAvailability) -> String {

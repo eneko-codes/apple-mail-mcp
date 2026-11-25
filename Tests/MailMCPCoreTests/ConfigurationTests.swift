@@ -3,11 +3,11 @@ import Testing
 
 @testable import MailMCPCore
 
-/// These once drove `Configuration.parse`. Per the owner's plug-and-play rule the four
+/// These once drove `Configuration.parse`. Per the owner's plug-and-play rule the
 /// settings it used to parse from `user_config` are now fixed constants — there is
 /// nothing left to parse — so what remains proves the constants hold the values the
-/// manifest used to default to, and that the fixed "search everything" behaviour still
-/// works with no setting left to drive it.
+/// server shipped with, and that the fixed "search everything" behaviour still works
+/// with no setting left to drive it.
 @Suite("Configuration")
 struct ConfigurationTests {
 
@@ -22,12 +22,14 @@ struct ConfigurationTests {
         return (text, result.isError)
     }
 
-    @Test("The fixed constants match the values the manifest used to default to")
+    /// The message window replaced the old body limit of 8,000 characters: its default is
+    /// the tool standard's usual page.
+    @Test("The fixed constants hold the values the server shipped with")
     func constantsMatchTheOldDefaults() {
         #expect(Configuration.defaultMailbox == nil)
         #expect(Configuration.scanCeiling == 500)
-        #expect(Configuration.bodyLimit == 8_000)
         #expect(Configuration.searchLimit == 20)
+        #expect(Configuration.defaultMaxCharacters == ToolStandard.usualPage)
     }
 
     /// The old configurable default mailbox is gone; unset was already its meaning, and
