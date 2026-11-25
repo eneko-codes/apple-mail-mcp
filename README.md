@@ -81,17 +81,17 @@ mail`/`synchronize`.
 ### 1. Build the bundle
 
 ```bash
-MCPB_SIGN_IDENTITY="Apple Development: Your Name (TEAMID)" ./scripts/pack.sh
+security find-identity -v -p codesigning   # copy the 40-character hash of an Apple Development or Developer ID Application identity
+MCPB_SIGN_IDENTITY="<identity hash>" ./scripts/pack.sh
 ```
+
+Pass the hash, not the certificate's name: `pack.sh` prints the identity it signs with,
+and the name is yours.
 
 That builds an arm64 (Apple silicon only) release binary, signs it, checks the embedded
 `Info.plist` survived both linking and signing, prints the designated requirement, and
 writes `dist/apple-mail-mcp.mcpb`. It fails loudly rather than shipping a bundle that
 would silently refuse to work.
-
-```bash
-security find-identity -v -p codesigning
-```
 
 ### 2. Install it
 
@@ -147,7 +147,7 @@ Contacts and Calendar did not. Do not rely on that.
 ### Preparing something to distribute
 
 ```bash
-MCPB_HARDENED=1 MCPB_SIGN_IDENTITY="Developer ID Application: …" ./scripts/pack.sh
+MCPB_HARDENED=1 MCPB_SIGN_IDENTITY="<Developer ID Application hash>" ./scripts/pack.sh
 ```
 
 `Resources/entitlements.plist` is applied automatically. It has to be: the hardened
