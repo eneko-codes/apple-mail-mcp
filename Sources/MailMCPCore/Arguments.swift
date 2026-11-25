@@ -1,5 +1,4 @@
 import Foundation
-import MCP
 
 public struct Arguments {
     private let values: [String: Value]

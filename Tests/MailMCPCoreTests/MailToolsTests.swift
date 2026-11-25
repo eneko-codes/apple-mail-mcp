@@ -1,5 +1,4 @@
 import Foundation
-import MCP
 import Testing
 
 @testable import MailMCPCore
@@ -16,10 +15,10 @@ struct MailToolsTests {
     ) async -> (text: String, isError: Bool) {
         let tools = MailTools(store: store, calendar: Fixtures.calendar)
         let result = await tools.handle(.init(name: name, arguments: arguments))
-        guard case .text(let text, _, _) = result.content.first else {
+        guard case .text(let text) = result.content.first else {
             return ("(no text content)", true)
         }
-        return (text, result.isError ?? false)
+        return (text, result.isError)
     }
 
     // MARK: Catalogue
@@ -154,7 +153,7 @@ struct MailToolsTests {
         let tools = MailTools(
             store: FakeMailStore(messages: Fixtures.manyMessages), calendar: Fixtures.calendar)
         let result = await tools.handle(.init(name: "mail_search", arguments: [:]))
-        guard case .text(let text, _, _) = result.content.first else {
+        guard case .text(let text) = result.content.first else {
             Issue.record("no text content")
             return
         }
@@ -169,7 +168,7 @@ struct MailToolsTests {
             store: FakeMailStore(messages: Fixtures.manyMessages), calendar: Fixtures.calendar)
         let result = await tools.handle(
             .init(name: "mail_search", arguments: ["query": .string("nothingmatches")]))
-        guard case .text(let text, _, _) = result.content.first else {
+        guard case .text(let text) = result.content.first else {
             Issue.record("no text content")
             return
         }
